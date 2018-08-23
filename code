@@ -1,0 +1,315 @@
+import random
+import numpy as np
+import _pickle as cp
+import gzip
+import cv2
+
+from scipy import ndimage
+#import sys
+#import os
+import math
+import PIL
+
+from matplotlib import pyplot as plt
+from PIL import Image
+
+
+class Network(object):
+
+    def __init__(self, sizes):
+
+        self.num_layers = len(sizes)
+        self.sizes = sizes
+        self.biases = [np.random.randn(y, 1) for y in sizes[1:]]
+        self.weights = [np.random.randn(y, x)
+                        for x, y in zip(sizes[:-1], sizes[1:])]
+
+    def feedforward(self, a):
+        for b, w in zip(self.biases, self.weights):
+            a = sigmoid(np.dot(w, a)+b)
+        return a
+
+    def SGD(self, training_data, epochs, mini_batch_size, eta,
+            test_data=None):
+
+        test_data = list(test_data)
+        training_data = list(training_data)
+        if test_data: n_test = len(test_data)
+        n = len(training_data)
+
+        for j in range(epochs):
+            random.shuffle(training_data)
+            mini_batches = [
+                training_data[k:k+mini_batch_size]
+                for k in range(0, n, mini_batch_size)]
+            for mini_batch in mini_batches:
+                self.update_mini_batch(mini_batch, eta)
+            if test_data:
+                print("Epoch {0}: {1} / {2}".format(
+                    j, self.evaluate(test_data), n_test))
+            else:
+                print("Epoch {0} complete".format(j))
+
+    def update_mini_batch(self, mini_batch, eta):
+
+        nabla_b = [np.zeros(b.shape) for b in self.biases]
+        nabla_w = [np.zeros(w.shape) for w in self.weights]
+        for x, y in mini_batch:
+            delta_nabla_b, delta_nabla_w = self.backprop(x, y)
+            nabla_b = [nb+dnb for nb, dnb in zip(nabla_b, delta_nabla_b)]
+            nabla_w = [nw+dnw for nw, dnw in zip(nabla_w, delta_nabla_w)]
+        self.weights = [w-(eta/len(mini_batch))*nw
+                        for w, nw in zip(self.weights, nabla_w)]
+        self.biases = [b-(eta/len(mini_batch))*nb
+                       for b, nb in zip(self.biases, nabla_b)]
+
+    def backprop(self, x, y):
+
+        nabla_b = [np.zeros(b.shape) for b in self.biases]
+        nabla_w = [np.zeros(w.shape) for w in self.weights]
+        # feedforward
+        activation = x
+        activations = [x] # list to store all the activations, layer by layer
+        zs = [] # list to store all the z vectors, layer by layer
+        for b, w in zip(self.biases, self.weights):
+            z = np.dot(w, activation)+b
+            zs.append(z)
+            activation = sigmoid(z)
+            activations.append(activation)
+        # backward pass
+        delta = self.cost_derivative(activations[-1], y) * \
+            sigmoid_prime(zs[-1])
+        nabla_b[-1] = delta
+        nabla_w[-1] = np.dot(delta, activations[-2].transpose())
+
+        for l in range(2, self.num_layers):
+            z = zs[-l]
+            sp = sigmoid_prime(z)
+            delta = np.dot(self.weights[-l+1].transpose(), delta) * sp
+            nabla_b[-l] = delta
+            nabla_w[-l] = np.dot(delta, activations[-l-1].transpose())
+        return (nabla_b, nabla_w)
+
+    def evaluate(self, test_data):
+
+        test_results = [(np.argmax(self.feedforward(x)), y)
+                        for (x, y) in test_data]
+        return sum(int(x == y) for (x, y) in test_results)
+
+    def cost_derivative(self, output_activations, y):
+
+        return (output_activations-y)
+
+    def predict(self, image):
+        final_output = self.feedforward(image.astype(bool).astype(int))
+        print(final_output)
+        return(np.argmax(final_output))
+
+
+def sigmoid(z):
+    """The sigmoid function."""
+    return 1.0/(1.0+np.exp(-z))
+
+def sigmoid_prime(z):
+    """Derivative of the sigmoid function."""
+    return sigmoid(z)*(1-sigmoid(z))
+
+
+#Loading the MINST data
+
+
+def load_data():
+    """Return the MNIST data as a tuple containing the training data,
+    the validation data, and the test data.
+
+    The ``training_data`` is returned as a tuple with two entries.
+    The first entry contains the actual training images.  This is a
+    numpy ndarray with 50,000 entries.  Each entry is, in turn, a
+    numpy ndarray with 784 values, representing the 28 * 28 = 784
+    pixels in a single MNIST image.
+
+    The second entry in the ``training_data`` tuple is a numpy ndarray
+    containing 50,000 entries.  Those entries are just the digit
+    values (0...9) for the corresponding images contained in the first
+    entry of the tuple.
+
+    The ``validation_data`` and ``test_data`` are similar, except
+    each contains only 10,000 images.
+
+    This is a nice data format, but for use in neural networks it's
+    helpful to modify the format of the ``training_data`` a little.
+    That's done in the wrapper function ``load_data_wrapper()``, see
+    below.
+    """
+
+    with gzip.open('C:/Users/Sharath Talikatte/Documents/minst data/check.pkl.gz','rb') as f:
+        training_data, validation_data, test_data = cp.load(f, encoding='latin1')
+    f.close()
+    return (training_data, validation_data, test_data)
+
+def load_data_wrapper():
+    """Return a tuple containing ``(training_data, validation_data,
+    test_data)``. Based on ``load_data``, but the format is more
+    convenient for use in our implementation of neural networks.
+
+    In particular, ``training_data`` is a list containing 50,000
+    2-tuples ``(x, y)``.  ``x`` is a 784-dimensional numpy.ndarray
+    containing the input image.  ``y`` is a 10-dimensional
+    numpy.ndarray representing the unit vector corresponding to the
+    correct digit for ``x``.
+
+    ``validation_data`` and ``test_data`` are lists containing 10,000
+    2-tuples ``(x, y)``.  In each case, ``x`` is a 784-dimensional
+    numpy.ndarry containing the input image, and ``y`` is the
+    corresponding classification, i.e., the digit values (integers)
+    corresponding to ``x``.
+
+    Obviously, this means we're using slightly different formats for
+    the training data and the validation / test data.  These formats
+    turn out to be the most convenient for use in our neural network
+    code."""
+    tr_d, va_d, te_d = load_data()
+    training_inputs = [np.reshape(x, (784, 1)) for x in tr_d[0]]
+    training_results = [vectorized_result(y) for y in tr_d[1]]
+    training_data = zip(training_inputs, training_results)
+    validation_inputs = [np.reshape(x, (784, 1)) for x in va_d[0]]
+    validation_data = zip(validation_inputs, va_d[1])
+    test_inputs = [np.reshape(x, (784, 1)) for x in te_d[0]]
+    test_data = zip(test_inputs, te_d[1])
+    return (training_data, validation_data, test_data)
+
+def vectorized_result(j):
+    """Return a 10-dimensional unit vector with a 1.0 in the jth
+    position and zeroes elsewhere.  This is used to convert a digit
+    (0...9) into a corresponding desired output from the neural
+    network."""
+    e = np.zeros((10, 1))
+    e[j] = 1.0
+    return e
+
+#Taking the picture
+
+camera_port = 0
+
+#Number of frames to throw away while the camera adjusts to light levels
+ramp_frames = 30
+camera = cv2.VideoCapture(camera_port)
+
+# Captures a single image from the camera and returns it in PIL format
+def get_image():
+    retval, im = camera.read()
+    return im
+
+
+flag = input("Enter 1 to capture image: ")
+for i in range(ramp_frames):
+    temp = get_image()
+
+print("Taking image...")
+# Take the actual image we want to keep
+camera_capture = get_image()
+
+cv2.imshow("captured",camera_capture)
+cv2.waitKeyEx(100)
+file = "C:/Users/Sharath Talikatte/Desktop/Neural Networks/test_image.jpg"
+cv2.imwrite(file, camera_capture)
+del(camera)
+print("Image Captured\n")
+
+#Cropping the Image
+print("Cropping the image...\n")
+im = Image.open("C:/Users/Sharath Talikatte/Desktop/Neural Networks/test_image.jpg")
+
+outfile = "C:/Users/Sharath Talikatte/Desktop/Neural Networks/test_image_out.jpg"
+#outfile1 = "C:/Users/Sharath Talikatte/Desktop/Neural Networks/zero_test_1.jpg"
+region=im.crop((260, 180, 380, 350))
+#Do some operations here if you want but on region not on im!
+region.save(outfile, "PNG")
+print("Image cropped.\n")
+
+#Processing the image
+print("Processing the image...\n")
+def getBestShift(img):
+    cy,cx = ndimage.measurements.center_of_mass(img)
+
+    rows,cols = img.shape
+    shiftx = np.round(cols/2.0-cx).astype(int)
+    shifty = np.round(rows/2.0-cy).astype(int)
+
+    return shiftx,shifty
+
+def shift(img,sx,sy):
+    rows,cols = img.shape
+    M = np.float32([[1,0,sx],[0,1,sy]])
+    shifted = cv2.warpAffine(img,M,(cols,rows))
+    return shifted
+
+
+# read the image
+gray = cv2.imread("C:/Users/Sharath Talikatte/Desktop/Neural Networks/test_image_out.jpg", cv2.IMREAD_GRAYSCALE)
+gray = cv2.resize(255-gray, (28, 28))
+
+(thresh, gray) = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+
+while np.sum(gray[0]) == 0:
+    gray = gray[1:]
+
+while np.sum(gray[:,0]) == 0:
+    gray = np.delete(gray,0,1)
+
+while np.sum(gray[-1]) == 0:
+    gray = gray[:-1]
+
+while np.sum(gray[:,-1]) == 0:
+    gray = np.delete(gray,-1,1)
+
+rows,cols = gray.shape
+
+if rows > cols:
+    factor = 20.0 / rows
+    rows = 20
+    cols = int(round(cols * factor))
+    gray = cv2.resize(gray, (cols, rows))
+else:
+    factor = 20.0 / cols
+    cols = 20
+    rows = int(round(rows * factor))
+    gray = cv2.resize(gray, (cols, rows))
+
+colsPadding = (int(math.ceil((28-cols)/2.0)),int(math.floor((28-cols)/2.0)))
+rowsPadding = (int(math.ceil((28-rows)/2.0)),int(math.floor((28-rows)/2.0)))
+gray = np.lib.pad(gray,(rowsPadding,colsPadding),'constant')
+
+
+
+shiftx,shifty = getBestShift(gray)
+shifted = shift(gray,shiftx,shifty)
+gray = shifted
+
+
+
+cv2.imwrite("C:/Users/Sharath Talikatte/Desktop/Neural Networks/Processed_images/eight_processed_81.jpg", gray)
+
+
+image1 = gray.flatten() / 255.0
+image = image1.reshape(784,1)
+#print(image)
+print("Image processed.\n")
+
+#Creating the object of class Network and training the network
+
+print("Training the neural network...\n")
+training_data,validation_data,test_data = load_data_wrapper()
+net = Network([784, 30, 10])
+net.SGD(training_data, 10, 10, 3.5, test_data=test_data)
+print("Network trained.\n")
+
+
+#Predicting the number
+print("Printing activations of the output layer neurons.\n")
+
+prediction = net.predict(image)
+
+print("\nThe predicted number is: ")
+print(prediction)
+print("\n")
